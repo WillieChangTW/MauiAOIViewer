@@ -1,0 +1,293 @@
+﻿@page "/AOIImageViewer"
+@using MauiAOIViewer.Services
+@using MauiAOIViewer.Shared.Models
+@using MauiAOIViewer.Shared.Services
+@inject ImageDecodeService DecodeService
+@inject IJSRuntime JS
+
+<h3 class="mb-4">AOI 圖像檢視器</h3>
+
+<!-- JobID + 分頁控制 -->
+<div class="mb-3">
+    <div class="d-flex align-items-center mb-2" style="gap:10px;">
+        <label class="me-2 mb-0">請選擇 初捲捲號：</label>
+        <select class="form-select" style="width: 250px;" @bind="selectedJobId">
+            <option value="">-- 請選擇 初捲捲號 --</option>
+            @foreach (var jobId in jobIdList)
+            {
+                <option value="@jobId">@jobId</option>
+            }
+        </select>
+        <button class="btn btn-primary" @onclick="() => LoadImagesByPage(true)" disabled="@string.IsNullOrEmpty(selectedJobId)">查詢</button>
+    </div>
+
+    <div class="mb-3 d-flex justify-content-start align-items-center" style="gap:10px;">
+        <button class="btn btn-outline-secondary" @onclick="FirstPage" disabled="@(_pageIndex == 1)">第一頁</button>
+        <button class="btn btn-outline-secondary" @onclick="PrevPage" disabled="@(_pageIndex == 1)">上一頁</button>
+        <span>第 @_pageIndex 頁，共 @_totalCount 筆</span>
+        <button class="btn btn-outline-secondary" @onclick="NextPage" disabled="@IsLastPage">下一頁</button>
+        <button class="btn btn-outline-secondary" @onclick="LastPage" disabled="@IsLastPage">最後一頁</button>
+    </div>
+
+    @if (!string.IsNullOrEmpty(defectFilter))
+    {
+        <div class="alert alert-info d-flex justify-content-between align-items-center">
+            <div>
+                <strong>已套用瑕疵過濾：</strong> @defectFilter
+            </div>
+            <button class="btn btn-sm btn-outline-secondary" @onclick="ClearDefectFilter">清除過濾</button>
+        </div>
+    }
+
+</div>
+
+<!-- 前十大瑕疵統計 -->
+@if (DefectSummary.Any())
+{
+    <div class="d-flex justify-content-between align-items-center mt-4 mb-2">
+        <h5 class="mb-0">前十大瑕疵統計</h5>
+        <div class="input-group" style="width: 300px;">
+            <input class="form-control" placeholder="輸入瑕疵名稱查詢" @bind="searchDefectName" />
+            <button class="btn btn-outline-primary" @onclick="() => ApplyDefectFilter(searchDefectName)">查詢</button>
+        </div>
+    </div>
+    <table class="table table-bordered table-striped">
+        <thead class="table-light">
+            <tr>
+                <th>瑕疵名稱</th>
+                <th>瑕疵數量</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var item in DefectSummary)
+            {
+                <tr>
+                    <td>@item.DefectName</td>
+                    <td>@item.Count</td>
+                    <td class="text-end">
+                        <button class="btn btn-sm btn-outline-primary"
+                                @onclick="() => ApplyDefectFilter(item.DefectName)">
+                            查詢此瑕疵
+                        </button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+
+
+}
+
+<!-- 圖片展示區 -->
+@if (isLoading)
+{
+    <p>圖片載入中...</p>
+}
+else if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="alert alert-danger">@errorMessage</div>
+}
+else if (images.Count == 0)
+{
+    <p>無圖片資料。</p>
+}
+else
+{
+    <div class="container">
+        <div class="border rounded p-3 mb-4 bg-light">
+            <div class="row">
+                @foreach (var img in images)
+                {
+                    <div class="col-md-3 col-4 mb-3">
+                        <div class="card image-card position-relative shadow-sm border-0 h-100">
+                            <img src="data:image/jpeg;base64,@img.Base64"
+                                 class="card-img-top thumb-img"
+                                 style="object-fit: cover; height: 240px; width: 100%; cursor: pointer;"
+                                 @onclick="() => ShowModal(img)" />
+                            <div class="card-body p-2">
+                                <small class="d-block text-muted">檢驗編號：@img.FlawId</small>
+                                <small class="d-block text-muted">瑕疵名稱：@img.DefectName</small>
+                                <small class="d-block text-muted">發生時間：@img.DefectTime?.ToString("yy-MM-dd HH:mm:ss")</small>
+                                <a class="btn btn-sm btn-outline-success mt-1 w-100" href="@img.DownloadUrl" download>下載</a>
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
+}
+
+<!-- Modal 預覽 -->
+@if (modalVisible && currentIndex >= 0)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.75);" role="dialog">
+        <div class="modal-dialog modal-xl modal-dialog-centered" role="document">
+            <div class="modal-content bg-dark text-white">
+                <div class="modal-header border-0">
+                    <div class="mt-3 text-start small">
+                        <dl class="row">
+                            <dt class="col-sm-3">檔案名稱：</dt>
+                            <dd class="col-sm-9">@CurrentImage.FileName</dd>
+
+                            <dt class="col-sm-3">檢驗編號：</dt>
+                            <dd class="col-sm-9">@CurrentImage.FlawId</dd>
+
+                            <dt class="col-sm-3">瑕疵名稱：</dt>
+                            <dd class="col-sm-9">@CurrentImage.DefectName</dd>
+
+                            <dt class="col-sm-3">發生時間：</dt>
+                            <dd class="col-sm-9">@CurrentImage.DefectTime?.ToString("yyyy-MM-dd HH:mm:ss")</dd>
+
+                            <dt class="col-sm-3">尺寸：</dt>
+                            <dd class="col-sm-9">@CurrentImage.Width x @CurrentImage.Height px</dd>
+                        </dl>
+                    </div>
+                    <button type="button" class="btn-close btn-close-white" @onclick="CloseModal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body text-center">
+                    <img src="data:image/jpeg;base64,@CurrentImage.Base64"
+                         class="img-fluid rounded shadow"
+                         style="max-height: 80vh;" />
+                    <div class="mt-3 d-flex justify-content-between">
+                        <button class="btn btn-light" @onclick="PreviousImage" disabled="@IsFirstImage">← 上一張</button>
+                        <button class="btn btn-light" @onclick="NextImage" disabled="@IsLastImage">下一張 →</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="modal-backdrop fade show"></div>
+}
+
+@code {
+    private List<string> jobIdList = new();
+    private string selectedJobId = string.Empty;
+    private List<ImageItem> images = new();
+    private List<DefectSummary> DefectSummary = new();
+
+    private string defectFilter = string.Empty;
+    private string searchDefectName = string.Empty;
+    private string errorMessage = string.Empty;
+
+    private int _pageIndex = 1;
+    private const int _pageSize = 50;
+    private int _totalCount = 0;
+    private int _totalPages => (_totalCount + _pageSize - 1) / _pageSize;
+    private bool IsLastPage => _pageIndex >= _totalPages;
+
+    private bool isLoading = false;
+    private bool modalVisible = false;
+    private int currentIndex = -1;
+
+    private ImageItem CurrentImage => currentIndex >= 0 && currentIndex < images.Count ? images[currentIndex] : new();
+    private bool IsFirstImage => currentIndex <= 0;
+    private bool IsLastImage => currentIndex >= images.Count - 1;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            jobIdList = await DecodeService.GetRecentJobIdsAsync(25);
+            if (jobIdList.Any())
+            {
+                selectedJobId = jobIdList.First();
+                await LoadImagesByPage(true);
+            }
+            HookKeyboard();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"初始化失敗：{ex.Message}";
+        }
+    }
+
+    private async Task LoadImagesByPage(bool resetPage = false)
+    {
+        isLoading = true;
+        errorMessage = string.Empty;
+        if (resetPage) _pageIndex = 1;
+
+        try
+        {
+            DefectSummary = await DecodeService.GetTop10DefectsAsync(selectedJobId);
+            _totalCount = string.IsNullOrEmpty(defectFilter)
+                ? await DecodeService.GetTotalCountByJobIdAsync(selectedJobId)
+                : await DecodeService.GetTotalCountByJobIdAndDefectNameAsync(selectedJobId, defectFilter);
+
+            images = string.IsNullOrEmpty(defectFilter)
+                ? await DecodeService.GetImagesByJobIdAsync(selectedJobId, _pageIndex, _pageSize)
+                : await DecodeService.GetImagesByJobIDAndDefectNameAsync(selectedJobId, defectFilter, _pageIndex, _pageSize);
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"讀取圖片時發生錯誤：{ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task ApplyDefectFilter(string name)
+    {
+        defectFilter = name;
+        await LoadImagesByPage(true);
+    }
+
+    private async Task ClearDefectFilter()
+    {
+        defectFilter = string.Empty;
+        searchDefectName = string.Empty;
+        await LoadImagesByPage(true);
+    }
+
+    private async Task FirstPage() => await ChangePageAsync(1);
+    private async Task LastPage() => await ChangePageAsync(_totalPages);
+    private async Task PrevPage() => await ChangePageAsync(_pageIndex - 1);
+    private async Task NextPage() => await ChangePageAsync(_pageIndex + 1);
+
+    private async Task ChangePageAsync(int page)
+    {
+        if (page >= 1 && page <= _totalPages)
+        {
+            _pageIndex = page;
+            await LoadImagesByPage();
+        }
+    }
+
+    private void ShowModal(ImageItem item)
+    {
+        currentIndex = images.IndexOf(item);
+        modalVisible = true;
+    }
+
+    private void CloseModal() => modalVisible = false;
+
+    private void PreviousImage() { if (currentIndex > 0) currentIndex--; }
+    private void NextImage() { if (currentIndex < images.Count - 1) currentIndex++; }
+
+    private DotNetObjectReference<object>? selfRef;
+    private void HookKeyboard()
+    {
+        selfRef = DotNetObjectReference.Create<object>(this);
+        JS.InvokeVoidAsync("aoiModalKeyboardSupport.init", selfRef);
+    }
+
+    [JSInvokable]
+    public void OnKeyDown(string key)
+    {
+        if (!modalVisible) return;
+        if (key == "ArrowLeft") PreviousImage();
+        else if (key == "ArrowRight") NextImage();
+        StateHasChanged();
+    }
+
+    public void Dispose()
+    {
+        JS.InvokeVoidAsync("aoiModalKeyboardSupport.cleanup");
+        selfRef?.Dispose();
+    }
+}
